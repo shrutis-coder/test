@@ -19,3 +19,5 @@ def save_cleaned_data(df, output_file):
     """Save the cleaned DataFrame to an Excel file."""
     df.to_excel(output_file, index=False)
     print(f"Saved cleaned data to {output_file}")
+    print(f"testing")
+    

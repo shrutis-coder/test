@@ -85,7 +85,6 @@ def combine_datasets(small_df, big_df):
 MIN_PLAUSIBLE_DOLLARS = 1000  # below this, budget/revenue is placeholder junk (e.g. $1), not real data
 
 def clean_combined_data(df):
-    """Drop rows with zeroed-out, placeholder, or missing core fields so only usable movies remain."""
     df = df.copy()
     df["budget"] = pd.to_numeric(df["budget"], errors="coerce")
     df["revenue"] = pd.to_numeric(df["revenue"], errors="coerce")
@@ -114,6 +113,5 @@ def build_processed_dataset(small_file, big_file, output_file):
     return cleaned
 
 def save_cleaned_data(df, output_file):
-    """Save the cleaned DataFrame to an Excel file."""
     df.to_excel(output_file, index=False)
-    print(f"Saved cleaned data to {output_file}")
+    print(f"Ceaned data to {output_file}")

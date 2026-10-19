@@ -45,3 +45,14 @@ genre_thriller,production,1 if the film has this genre (multi-hot),TMDB genres,y
 genre_war,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
 genre_western,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
 features_version,key,Version of the feature code that made the row,this file,yes,P1,production_features_v1
+budget_nominal,budget,"Production budget in dollars of the release year (TMDB); blank if under $10,000",TMDB budget,no (label for the budget estimator),P1,budget_table_v1
+gross_nominal,budget,"Worldwide gross in release-year dollars (TMDB); blank if under $10,000",TMDB revenue,no (outcome),P1,budget_table_v1
+inflation_factor,budget,US CPI at the latest month divided by CPI at the release month,FRED CPIAUCSL,yes,P1,budget_table_v1
+budget_adj,budget,Budget in today's dollars = budget_nominal x inflation_factor,TMDB + FRED CPI,no (label for the budget estimator),P1,budget_table_v1
+gross_adj,budget,Gross in today's dollars,TMDB + FRED CPI,no (outcome),P1,budget_table_v1
+budget_band_adj,budget,"micro <$1M, low $1-10M, mid $10-40M, high $40-100M, tentpole $100M+, on budget_adj",TMDB + FRED CPI,no (label for the budget estimator),P1,budget_table_v1
+budget_band_nominal,budget,Same bands on the unadjusted budget (for comparison only),TMDB,no,P1,budget_table_v1
+flag_budget_usable,flag,"1 if the budget is at least $10,000",TMDB,yes,P1,budget_table_v1
+flag_no_release_date,flag,1 if the release date was missing and mid-year of the title year was used,TMDB,yes,P1,budget_table_v1
+flag_cpi_extrapolated,flag,1 if the film predates the first CPI month (1947) and the first month was used,FRED CPIAUCSL,yes,P1,budget_table_v1
+budget_table_version,key,Version of the budget table code,this file,yes,P1,budget_table_v1

@@ -58,3 +58,6 @@ flag_cpi_extrapolated,flag,1 if the film predates the first CPI month (1947) and
 budget_table_version,key,Version of the budget table code,this file,yes,P1,budget_table_v1
 year_gap,flag,Years between the MovieSum title year and the TMDB release year,MovieSum + TMDB,yes,P1,budget_table_v1
 flag_year_mismatch,flag,1 if year_gap is 2 or more: the TMDB match is probably a different film (e.g. a remake),MovieSum + TMDB,yes,P1,budget_table_v1
+flag_budget_suspect,flag,1 if a person reviewed the TMDB budget and judged it implausible (see budget_suspect_reason),manual review,no,P1,budget_table_v1
+budget_suspect_reason,flag,Why the budget was marked suspect,manual review,no,P1,budget_table_v1
+use_for_budget_estimator,flag,1 if the budget is usable and not suspect: the rows to train the budget estimator on,rule,no,P1,budget_table_v1

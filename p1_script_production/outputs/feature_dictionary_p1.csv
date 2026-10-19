@@ -56,3 +56,5 @@ flag_budget_usable,flag,"1 if the budget is at least $10,000",TMDB,yes,P1,budget
 flag_no_release_date,flag,1 if the release date was missing and mid-year of the title year was used,TMDB,yes,P1,budget_table_v1
 flag_cpi_extrapolated,flag,1 if the film predates the first CPI month (1947) and the first month was used,FRED CPIAUCSL,yes,P1,budget_table_v1
 budget_table_version,key,Version of the budget table code,this file,yes,P1,budget_table_v1
+year_gap,flag,Years between the MovieSum title year and the TMDB release year,MovieSum + TMDB,yes,P1,budget_table_v1
+flag_year_mismatch,flag,1 if year_gap is 2 or more: the TMDB match is probably a different film (e.g. a remake),MovieSum + TMDB,yes,P1,budget_table_v1

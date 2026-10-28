@@ -1,1 +1,4 @@
 .DS_Store
+raw/
+clean/interviews/*
+!clean/interviews/.gitkeep

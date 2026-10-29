@@ -2,3 +2,9 @@
 raw/
 clean/interviews/*
 !clean/interviews/.gitkeep
+clean/*/*
+!clean/*/.gitkeep
+features/*/*
+!features/*/.gitkeep
+models/*/*
+!models/*/.gitkeep

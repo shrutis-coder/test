@@ -10,7 +10,7 @@ Last updated Oct 13, 2026 by Sarah
 | P2: Sarah | Script: Story | Script rater, Segment scorer (3 curves), story features, LLM controls, 50 human-rated scripts | Script expert |
 | P3: Melody | Market | Data pull, News reader, trend features, release window search | Market expert |
 | P4: Shruti | Interviews | Transcripts, Claim extractor, Rubric builder, Script judge, Report writer | Interview expert |
-| P5: Wesley, Akhil | Comps | Clean and label the 1M dataset, year split, Embedding model, comps search | Comps expert |
+| P5: Wesley | Comps | Clean and label the 1M dataset, year split, Embedding model, comps search | Comps expert |
 | P6 | Combiner | Out-of-fold setup, 1D CNN, dense layers, three heads, calibration, baselines, ablations, evaluation | Combiner |
 
 ## Step 1. Collect the data

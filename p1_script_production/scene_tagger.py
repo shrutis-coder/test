@@ -18,15 +18,16 @@ import os
 import random
 import re
 import sys
+import threading
 import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from scene_parser import parse_script, clean
 
-TAGGER_VERSION = "scene_tagger_v1"
-PROMPT_VERSION = "scene_tagger_prompt_v1"
-DEFAULT_MODEL = "claude-haiku-5-5"
+TAGGER_VERSION = "scene_tagger_v2_gemini"
+PROMPT_VERSION = "scene_tagger_prompt_v3"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 MAX_SCENES = 25          # scenes per call
 MAX_CHARS = 28000        # characters of scene text per call (about 7,000 tokens)
 DESC_HEAD, DESC_TAIL = 2200, 800   # long action text keeps its start and its end
@@ -43,20 +44,20 @@ FIELDS = {
 }
 VOCAB = {
     "water": "on, in or under water, or boats under way at sea",
-    "weather": "rain, snow, storm, fog or strong wind that must be made or shot in",
+    "weather": "rain, snow (including snow on the ground), storm, fog or strong wind, or a scene clearly set in harsh winter cold",
     "fire_explosions": "fire, pyrotechnics or explosions",
     "vehicles": "moving vehicles on screen: driving, trains, planes, boats under way",
     "aerial": "helicopters, planes in flight, or aerial photography",
-    "animals": "live animals that act or must be handled",
+    "animals": "live animals or insects that appear on screen or act: pets, horses, birds, swarms of insects",
     "children": "child actors with real action or lines",
     "firearms": "guns fired, not just present",
-    "period_setting": "historical period needing period props, vehicles or streets",
+    "period_setting": "story set in the past (before about 1960), shown by period clothes, uniforms, weapons, carriages, candlelight, royal or noble titles (king, queen, cardinal, musketeer) or historic streets. NOT for modern scenes, and NOT just because a place looks old, rural, religious or old-fashioned",
     "gore_or_prosthetics": "blood, gore, wounds or prosthetic effects",
     "remote_location": "clearly remote or exotic place that implies travel: desert, jungle, mountains, abroad",
     "wire_or_rig": "wire work, zero gravity, or special camera rigs",
 }
 
-SYSTEM_TEMPLATE = """You are a film production breakdown assistant, doing the first pass a line producer does on a script. You will be given consecutive scenes from a screenplay. For each scene, rate what its ACTION TEXT implies for the cost of shooting it. Rate what must be filmed, not how good the scene is. Judge only from the text shown (dialogue text is not shown). If the text does not mention it, rate 0. Do not use outside knowledge of the film. When unsure between two levels, choose the lower one.
+SYSTEM_TEMPLATE = """You are a film production breakdown assistant, doing the first pass a line producer does on a script. You will be given consecutive scenes from a screenplay. For each scene, rate what its ACTION TEXT implies for the cost of shooting it. Rate what must be filmed, not how good the scene is. Judge only from the text shown (dialogue text is not shown). If the text does not mention it, rate 0. Do not use outside knowledge of the film. When unsure between two levels, choose the lower one. Do not guess a crowd or special conditions from a place name alone; the text must show them. If the text shows people, titles, clothes or objects from a past era, score costume and set as period work (costume 2, and set 1 to 2) and add period_setting.
 
 Fields (integers):
 ex = extras, non-speaking background people. 0 none, or only the named characters. 1 a few (about 1 to 9). 2 a crowd (about 10 to 50): restaurant, bar, street, office floor. 3 a large crowd (50+): stadium, battle, riot, parade.
@@ -155,6 +156,9 @@ def parse_response(text, expected):
             data = json.loads(t[i:j + 1])
         except ValueError:
             return None, "JSON could not be read", 0
+    if isinstance(data, dict):
+        lists = [v for v in data.values() if isinstance(v, list)]
+        data = lists[0] if lists else data
     if not isinstance(data, list):
         return None, "answer is not a list", 0
     by_n = {}
@@ -183,31 +187,82 @@ def parse_response(text, expected):
         conds = o.get("c", [])
         if not isinstance(conds, list):
             conds, warn = [], warn + 1
-        r["c"] = sorted({c for c in conds if c in VOCAB})
-        warn += len([c for c in conds if c not in VOCAB])
+        good = [c for c in conds if isinstance(c, str) and c in VOCAB]  # parsefix_v1
+        r["c"] = sorted(set(good))
+        warn += len(conds) - len(good)
         res[n] = r
     return res, "", warn
 
 
 # ---------- calling the model ----------
+class EmptyAnswer(Exception):
+    def __init__(self, why, tin, tout):
+        Exception.__init__(self, why)
+        self.tin, self.tout = tin, tout
+
+
+_rate_lock = threading.Lock()
+_next_slot = [0.0]
+
+
+def wait_for_slot(rpm):
+    """Spread calls out so no more than rpm calls start per minute (0 = no limit)."""
+    if not rpm:
+        return
+    with _rate_lock:
+        now = time.time()
+        start = max(now, _next_slot[0])
+        _next_slot[0] = start + 60.0 / rpm
+    if start > now:
+        time.sleep(start - now)
+
+
 def make_client():
     try:
-        import anthropic
+        from google import genai
     except ImportError:
-        print("The 'anthropic' package is not installed. Run:  python -m pip install anthropic")
+        print("The Google AI package is not installed. Run:  python -m pip install google-genai")
         raise SystemExit
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("No API key found in this Git Bash window. Set it first (see the instructions), then run again.")
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        print("No Gemini API key found in this Git Bash window. Set it first (see the instructions), then run again.")
         raise SystemExit
-    return anthropic.Anthropic(max_retries=5)
+    return genai.Client(api_key=key)
 
 
-def real_call(client, model, user, n_scenes):
-    resp = client.messages.create(
-        model=model, max_tokens=n_scenes * 60 + 300, system=SYSTEM,
-        messages=[{"role": "user", "content": user}])
-    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-    return text, resp.usage.input_tokens, resp.usage.output_tokens
+def real_call(client, model, user, n_scenes, opts):
+    from google.genai import types
+    wait_for_slot(opts.get("rpm", 0))
+    cfg = {"system_instruction": SYSTEM, "response_mime_type": "application/json",
+           "max_output_tokens": n_scenes * 80 + 2000}
+    th = (opts.get("thinking") or "").strip()
+    if th:
+        cfg["thinking_config"] = (types.ThinkingConfig(thinking_budget=int(th)) if th.isdigit()
+                                  else types.ThinkingConfig(thinking_level=th))
+    if opts.get("relax_safety"):
+        cfg["safety_settings"] = [types.SafetySetting(category=c, threshold="BLOCK_NONE") for c in (
+            "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")]
+    resp = client.models.generate_content(model=model, contents=user,
+                                          config=types.GenerateContentConfig(**cfg))
+    try:
+        text = resp.text or ""
+    except Exception:
+        text = ""
+    um = getattr(resp, "usage_metadata", None)
+    tin = (getattr(um, "prompt_token_count", 0) or 0) if um else 0
+    tout = ((getattr(um, "candidates_token_count", 0) or 0) + (getattr(um, "thoughts_token_count", 0) or 0)) if um else 0
+    if not text.strip():
+        pf = getattr(resp, "prompt_feedback", None)
+        cands = getattr(resp, "candidates", None)
+        if pf is not None and getattr(pf, "block_reason", None):
+            why = "blocked by Google: %s" % pf.block_reason
+        elif cands:
+            why = "no text, finish reason: %s" % getattr(cands[0], "finish_reason", "unknown")
+        else:
+            why = "empty answer"
+        raise EmptyAnswer(why, tin, tout)
+    return text, tin, tout
 
 
 def fake_call(user, imdb_id, run):
@@ -243,19 +298,28 @@ def do_job(job, ctx):
             if ctx["fake"]:
                 text, it, ot = fake_call(user, job["imdb_id"], job["run"])
             else:
-                text, it, ot = real_call(ctx["client"], ctx["model"], user, len(ns))
+                text, it, ot = real_call(ctx["client"], ctx["model"], user, len(ns), ctx["opts"])
+        except EmptyAnswer as e:
+            tin += e.tin
+            tout += e.tout
+            err = str(e)
+            continue
         except Exception as e:
-            name = type(e).__name__
-            if name in ("AuthenticationError", "PermissionDeniedError"):
-                raise Fatal("The API key was refused (%s). Check the key and try again." % name)
-            if name == "NotFoundError":
-                raise Fatal("The service does not know the model name '%s'. Ask which model to use." % ctx["model"])
-            err = "api error: %s" % name
-            time.sleep(min(30, 2 ** attempt))
+            code = getattr(e, "code", None)
+            msg = str(e)[:300]
+            if code in (400, 401, 403):
+                raise Fatal("Google refused the request (code %s). If this is about the key, check it. Details: %s" % (code, msg))
+            if code == 404:
+                raise Fatal("Google does not know the model name '%s'. Ask which model to use. Details: %s" % (ctx["model"], msg))
+            err = "api error %s: %s" % (code, msg[:150])
+            time.sleep(min(60, 10 * attempt) if code == 429 else min(30, 2 ** attempt))
             continue
         tin += it
         tout += ot
-        res, err, warn = parse_response(text, ns)
+        try:
+            res, err, warn = parse_response(text, ns)
+        except Exception as e:
+            res, err, warn = None, "could not read answer (%s)" % str(e)[:80], 0
         if res is not None:
             return {"ok": True, "imdb_id": job["imdb_id"], "first": ns[0], "last": ns[-1], "run": job["run"],
                     "model": ctx["model"], "prompt_version": PROMPT_VERSION, "tagger_version": TAGGER_VERSION,
@@ -358,12 +422,14 @@ def cmd_run(args):
     here, raw, tdir = paths()
     wanted = load_set(args.set, tdir)
     ctx = {"fake": args.fake, "model": "FAKE" if args.fake else args.model,
-           "client": None if args.fake else make_client()}
+           "client": None if args.fake else make_client(),
+           "opts": {"rpm": args.rpm, "thinking": args.thinking, "relax_safety": args.relax_safety}}
     lp = log_path(tdir, args.fake)
     done = {(r["imdb_id"], r["first"], r["last"], r["run"]) for r in read_log(lp, ctx["model"]) if r.get("ok")}
     print("Model:", ctx["model"], "| prompt:", PROMPT_VERSION, "| runs per chunk:", args.runs,
           "| already done in log:", len(done))
     n_ok = n_fail = tin = tout = submitted = 0
+    streak = [0]
     t0 = time.time()
     batch = []
 
@@ -383,8 +449,12 @@ def cmd_run(args):
                     tout += rec["out_tokens"]
                     if rec["ok"]:
                         n_ok += 1
+                        streak[0] = 0
                     else:
                         n_fail += 1
+                        streak[0] += 1
+                        if streak[0] >= 10:
+                            raise Fatal("10 calls in a row failed. Last reason: %s" % rec.get("error", "unknown"))
                     if (n_ok + n_fail) % 25 == 0:
                         print("   %d calls done (%d failed) | %.2fM in / %.2fM out tokens | %.0f s" % (
                             n_ok + n_fail, n_fail, tin / 1e6, tout / 1e6, time.time() - t0))
@@ -548,6 +618,9 @@ def main():
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--fake", action="store_true")
     ap.add_argument("--max_chunks", type=int, default=0)
+    ap.add_argument("--rpm", type=int, default=0)
+    ap.add_argument("--thinking", default="")
+    ap.add_argument("--relax_safety", action="store_true")
     ap.add_argument("--in_price", type=float, default=None)
     ap.add_argument("--out_price", type=float, default=None)
     args = ap.parse_args()

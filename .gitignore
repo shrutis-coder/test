@@ -8,3 +8,4 @@ features/*/*
 !features/*/.gitkeep
 models/*/*
 !models/*/.gitkeep
+__pycache__/

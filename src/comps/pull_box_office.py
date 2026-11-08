@@ -15,7 +15,7 @@ Steps:
   3. In the Box office section, find the first domestic-total and opening-weekend
      sentence. US dollars only; skips projections ("expected to", "tracking")
      and sentences about other markets ("in China", "worldwide", "overseas").
-  4. legs = domestic / opening, kept only if between 1 and 40.
+  4. legs = domestic / opening, kept only if between 1.3 and 40 (see MIN_LEGS).
 
 Run from the repo root (after clean_and_label.py has made the labeled table):
 
@@ -94,7 +94,10 @@ US_MARKER = re.compile(US_PLACE + r"|domestic", re.I)
 SECTION = re.compile(r"^(={2,4})\s*(?:Box[ -]office|Commercial performance|Commercial)\b.*?\1\s*$", re.I | re.M)
 FALLBACK_SECTION = re.compile(r"^(={2,4})\s*(?:Release|Reception|Theatrical release|Theatrical run)\b.*?\1\s*$",
                               re.I | re.M)
-MIN_LEGS, MAX_LEGS = 1.0, 40.0
+# No real film earns only its opening weekend (front-loaded wide releases end near 1.5-2x), so
+# legs under 1.3 means the same figure was read as both opening and total.
+MIN_LEGS, MAX_LEGS = 1.3, 40.0
+MAX_DOLLARS = 2e9   # above any film's domestic gross; catches typos like "$7,943,778 million"
 
 
 def to_dollars(num, unit):
@@ -209,6 +212,8 @@ def main(argv=None):
     parsed = titles["wiki_title"].map(lambda t: parse_section(sections.get(t)))
     titles[["domestic_gross", "opening_weekend", "domestic_sentence", "opening_sentence"]] = \
         pd.DataFrame(parsed.tolist(), index=titles.index)
+    for col in ("domestic_gross", "opening_weekend"):
+        titles.loc[titles[col] > MAX_DOLLARS, col] = float("nan")
     titles["legs"] = titles["domestic_gross"] / titles["opening_weekend"]
     bad = ~titles["legs"].between(MIN_LEGS, MAX_LEGS)
     titles.loc[bad, "legs"] = float("nan")

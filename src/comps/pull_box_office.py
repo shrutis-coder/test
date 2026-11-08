@@ -51,34 +51,43 @@ US_PLACE = (r"(?:the\s+)?(?:United States and Canada|U\.?S\.? and Canada|US and 
             r"United States|U\.S\.|US)\b")
 DOMESTIC = [
     # "grossed $176 million in the United States and Canada" / "earned $40 million domestically"
-    re.compile(r"\b(?:grossed|earned|made|took in|grossing|earning|making|taking in)\s+"
+    re.compile(r"\b(?:grossed|earned|made|took in|grossing|earning|making|taking in|collected)\s+"
                r"(?:a total of\s+|over\s+|more than\s+|about\s+|nearly\s+|almost\s+|roughly\s+)?"
-               + MONEY + r"\s+(?:domestically\b|in\s+" + US_PLACE + r")", re.I),
-    # "earned $40 million at the North American box office"
-    re.compile(r"\b(?:grossed|earned|made|took in|grossing|earning)\s+(?:over\s+|more than\s+|about\s+)?" + MONEY
-               + r"\s+at the\s+(?:domestic|North American|U\.?S\.?|US|American)\s+box office", re.I),
+               + MONEY + r"\s+(?:domestically\b|(?:in|from)\s+" + US_PLACE + r")", re.I),
+    # "earned $40 million at the North American box office", "at the US and Canadian box office"
+    re.compile(r"\b(?:grossed|earned|made|took in|grossing|earning|gross)\s+(?:of\s+|over\s+|more than\s+|about\s+)?"
+               + MONEY + r"\s+at the\s+(?:domestic|North American|American|"
+               r"U\.?S\.?(?: and Canadian)?|US(?: and Canadian)?)\s+box office", re.I),
     # "a domestic total of $40 million", "domestic gross of $40 million"
     re.compile(r"\bdomestic (?:total|gross|box office(?: total)?)\s+of\s+" + MONEY, re.I),
-    # "... worldwide, including $40 million in North America" (no verb right before)
-    re.compile(MONEY + r"\s+(?:domestically\b|in\s+" + US_PLACE + r")", re.I),
+    # "... worldwide, including $40 million in North America" / "$1.4 million from the US and Canada"
+    re.compile(MONEY + r"\s+(?:domestically\b|(?:in|from)\s+" + US_PLACE + r")", re.I),
 ]
+# Filler between a verb and the amount: "with a total gross of", "to an estimated", "collected a total of".
+CONNECT = (r"(?:a\s+|an\s+)?(?:total\s+|estimated\s+|reported\s+|combined\s+)?"
+           r"(?:gross\s+|take\s+|haul\s+|earnings\s+|tally\s+)?(?:of\s+)?"
+           r"(?:about\s+|over\s+|around\s+|approximately\s+|nearly\s+|roughly\s+)?")
+# Tried in order, most specific first, so "grossed $108,617 for the weekend and went on to gross
+# $22.5 million" yields the weekend figure, not the total.
 OPENING = [
-    # "went on to open for $33.4 million", "debuted at number one with $25.7 million", "opened in 3,000 theaters to $X"
-    re.compile(r"\b(?:open(?:ed|s)?|debut(?:ed|s)?)\b[^.$]{0,90}?\b(?:to|for|with|grossing|earning|making|taking in)\s+"
-               r"(?:a\s+)?(?:total of\s+|an estimated\s+|over\s+|about\s+)?" + MONEY, re.I),
-    # "$12 million in its opening weekend", "$12 million during its North American opening weekend"
-    re.compile(MONEY + r"\s+(?:in|during|over|from|on)\s+its\s+(?:\w+\s+){0,2}opening weekend", re.I),
-    # "opening weekend of $12 million"
-    re.compile(r"\bopening weekend\s+(?:of|total of|gross of|haul of|take of)\s+" + MONEY, re.I),
-    # "In its opening weekend, the film grossed $12 million"
-    re.compile(r"\bopening weekend\b[^.$]{0,70}?\b(?:grossed|earned|made|took in|grossing|earning|making|taking in)\s+"
-               r"(?:an estimated\s+|over\s+|about\s+)?" + MONEY, re.I),
+    # "$258,000 in six theaters during its opening weekend"
+    re.compile(MONEY + r"[^.$]{0,50}?\b(?:in|during|over|from|on|for)\s+(?:its|the)\s+(?:\w+\s+){0,3}"
+               r"(?:opening|first|debut)\s+weekend", re.I),
+    # "opened on 1,062 screens and grossed $4,022,891 for the weekend"
+    re.compile(MONEY + r"\s+(?:for|over)\s+(?:the|that)\s+weekend", re.I),
+    # "In its opening weekend, the film grossed $9.1 million", "For its first weekend, it collected a total of $21.6 million"
+    re.compile(r"\b(?:opening|first|debut)\s+weekend\b[^.$]{0,90}?\b(?:grossed|earned|made|took in|grossing|earning|"
+               r"making|taking in|collected|collecting|with|of)\s+" + CONNECT + MONEY, re.I),
+    # "went on to open for $33.4 million", "debuted at No. 1 ... with a total gross of $26.4 million",
+    # "ended up debuting to $21.2 million" ("to gross $X" is a later total, so it's excluded)
+    re.compile(r"\b(?:open(?:ed|s|ing)?|debut(?:ed|s|ing)?)\b[^.$]{0,120}?\b"
+               r"(?:to(?!\s+gross)|for|with|grossing|earning|making|taking in|collecting)\s+" + CONNECT + MONEY, re.I),
 ]
 NOT_WEEKEND = re.compile(r"^[^.]{0,40}?\b(?:first day|opening day|on (?:Friday|Thursday|Saturday)|previews|"
                          r"opening night|midnight)", re.I)
 PROJECTION = re.compile(r"projected|expected to|tracking|forecast|predicted|estimated to|anticipated|"
                         r"was set to|was going to|initially", re.I)
-OTHER_MARKET = re.compile(r"worldwide|global|overseas|internationally|other territories|other countries|"
+OTHER_MARKET = re.compile(r"worldwide|global|overseas|international|other territories|other countries|"
                           r"\bin (?:China|Japan|South Korea|Korea|India|the United Kingdom|the UK|France|Germany|"
                           r"Italy|Spain|Australia|Mexico|Brazil|Russia|Hong Kong|Taiwan)\b", re.I)
 US_MARKER = re.compile(US_PLACE + r"|domestic", re.I)
@@ -126,7 +135,7 @@ def parse_section(section):
     for s in sentences:
         if PROJECTION.search(s):
             continue
-        is_opening = re.search(r"\bopen|\bdebut", s, re.I)
+        is_opening = re.search(r"\bopen|\bdebut|first weekend", s, re.I)
         if domestic is None:
             # The verbless "$X in North America" form only counts outside opening-weekend sentences.
             pats = DOMESTIC if not is_opening else DOMESTIC[:3]

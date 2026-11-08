@@ -29,6 +29,17 @@ python src/comps/clean_and_label.py   # -> clean/comps/comps_labeled.csv
 
 Uses the Wikidata/Wikipedia files automatically if they exist. Prints counts against the plan's minimums.
 
+## 3b. Side labels: legs and streaming success (optional)
+
+```
+python src/comps/pull_box_office.py   # -> raw/comps/wikipedia_box_office.csv
+python src/comps/pull_streaming.py    # -> raw/comps/streaming_success.csv
+python src/comps/clean_and_label.py   # rerun to fill the legs / streaming_success columns
+```
+
+- **legs** = domestic (US + Canada) gross ÷ domestic opening weekend. Box Office Mojo's terms forbid scraping, so these numbers are read from the Box office section of each film's Wikipedia article (e.g. "grossed $176 million in the United States and Canada", "went on to open for $33.4 million"). The source sentences are saved so any number can be checked. Values outside 1–40 are dropped.
+- **streaming_success** = 1 if the film reached Netflix's global weekly Top 10 (films) within 18 months of release. It's defined only for films released from mid-2021 (when Netflix's public data starts) through 18 months before the latest week, and blank otherwise. It covers Netflix only, so it's mostly a test-era label. It reads P3's copy from `raw/market/all-weeks-global.tsv` if there is one.
+
 ## 4. Embed synopses
 
 ```
@@ -49,6 +60,7 @@ For each film, it keeps the 10 most similar films that meet all of these rules:
 - same budget band
 - includes the film's **main (first-listed) genre**
 - released **at least 180 days before** the film's `as_of_date`, so its final gross was already known (`--min-gap-days` to change)
+- released **no more than 20 years before** it, since older comps predicted worse (`--max-age-years`, 0 = no limit)
 - never the film itself
 
 `comps_features.csv` has one row per film, keyed on `imdb_id` + `as_of_date`, for the comps expert:
@@ -90,7 +102,8 @@ One row per film, keyed on `imdb_id` with `as_of_date` (= release date).
 | `audience_score` | TMDB vote average, only with ≥ 50 votes |
 | `budget_source`, `revenue_source`, `financials_source` | tmdb / wikidata / wikipedia |
 | `suspect_multiple` | 1 if gross > 100× budget (often a TMDB typo) |
-| `streaming_success`, `legs` | empty until streaming and opening-weekend data exist |
+| `legs`, `domestic_gross`, `opening_weekend` | domestic gross ÷ opening weekend (from Wikipedia); blank if not found |
+| `streaming_success` | 1/0 if the film hit Netflix's global Top 10 within 18 months; blank outside mid-2021 to 18 months ago |
 
 ## Cleaning rules
 

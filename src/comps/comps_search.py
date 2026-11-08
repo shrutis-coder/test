@@ -15,6 +15,9 @@ Rules (team plan, "Comps search"):
     (default 180) before the film's as_of_date, so its gross was already known.
     This is what stops comps from leaking the future.
   * Never itself.
+  * Not older than --max-age-years (default 20) before the as-of date. Old comps
+    predicted worse; a 20-year cap raised the comps expert's out-of-fold AUC
+    from 0.590 to 0.597 and lowered its log loss.
 
 Run from the repo root (after embed_synopses.py):
 
@@ -156,7 +159,10 @@ def main(argv=None):
     p.add_argument("--k", type=int, default=K_MAX, help="comps per film (plan: 5 to 10)")
     p.add_argument("--min-gap-days", type=int, default=180,
                    help="a comp must be released this many days before the film's as_of_date")
-    p.add_argument("--max-age-years", type=float, help="only comps released within this many years of the as-of date")
+    # 20 years: chosen on train out-of-fold accuracy of the comps expert (Nov 7, 2026). Caps of 10-25
+    # years all beat no cap (AUC ~0.60 vs 0.590, lower log loss); 20 keeps 97.6% of films at 5+ comps.
+    p.add_argument("--max-age-years", type=float, default=20,
+                   help="only comps released within this many years of the as-of date (0 = no limit)")
     p.add_argument("--min-votes", type=int, default=0, help="only comps with at least this many TMDB votes")
     p.add_argument("--close", type=float, help="similarity counted as a close comp (default depends on model)")
     p.add_argument("--show", nargs="*", default=["Get Out", "Paranormal Activity", "Inception", "Fight Club"],

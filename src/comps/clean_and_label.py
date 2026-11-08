@@ -10,8 +10,8 @@ Steps (team plan, "P5 Comps -> Clean and label"):
   4. Key on imdb_id with an as_of_date (= release date, so comps come only from earlier films).
   5. Inflation-adjust with US CPI (FRED CPIAUCSL).
   6. Labels: roi_multiple, log_roi, breakeven (>= 2.5x), breakout (>= 5x),
-     budget_band, audience_score. streaming_success and legs need sources we don't
-     have yet, so they are empty for now.
+     budget_band, audience_score, legs (domestic gross / opening weekend, from
+     pull_box_office.py) and streaming_success (from pull_streaming.py).
   7. Year split: train <= 2017, validate 2018-2019, skip 2020-2021, test 2022-2025.
   8. Print counts against the plan's minimums.
 
@@ -24,6 +24,8 @@ Reads (defaults; each can be changed with a flag):
     raw/comps/CPIAUCSL.csv                   --cpi       (skipped if missing)
     raw/comps/wikidata_financials.csv        --wikidata  (skipped if missing)
     raw/comps/wikipedia_financials.csv       --wikipedia (skipped if missing)
+    raw/comps/wikipedia_box_office.csv       --box-office (legs; skipped if missing)
+    raw/comps/streaming_success.csv          --streaming (skipped if missing)
 
 Writes:
     clean/comps/comps_labeled.csv            one row per film, the handoff table
@@ -82,7 +84,7 @@ OUTPUT_COLUMNS = [
     "genres", "original_language", "production_countries", "runtime_minutes",
     "budget", "revenue", "budget_adj", "revenue_adj", "cpi_base_month",
     "budget_band", "roi_multiple", "log_roi", "breakeven", "breakout",
-    "audience_score", "vote_count", "streaming_success", "legs",
+    "audience_score", "vote_count", "streaming_success", "legs", "domestic_gross", "opening_weekend",
     "overview", "has_synopsis", "suspect_multiple", "data_source", "financials_source", "budget_source", "revenue_source",
 ]
 
@@ -272,9 +274,10 @@ def add_labels(df):
     # Audience score: TMDB vote average (0-10) only where enough people voted.
     df["audience_score"] = df["vote_average"].where(df["vote_count"] >= AUDIENCE_MIN_VOTES)
 
-    # Need sources we haven't pulled yet (streaming Top 10, Box Office Mojo).
-    df["streaming_success"] = pd.NA
-    df["legs"] = pd.NA
+    # Filled later in main() from pull_box_office.py / pull_streaming.py output, if present.
+    for col in ("streaming_success", "legs", "domestic_gross", "opening_weekend"):
+        if col not in df.columns:
+            df[col] = pd.NA
 
     df["has_synopsis"] = (~_blank(df["overview"])).astype(int)
 
@@ -284,6 +287,24 @@ def add_labels(df):
     df["as_of_date"] = df["release_date"].dt.date
     df["release_date"] = df["release_date"].dt.date
     return df.rename(columns={"id": "tmdb_id"})
+
+
+def add_side_labels(df, box_office_path, streaming_path):
+    """legs / domestic gross / opening weekend and streaming_success, joined on imdb_id."""
+    if box_office_path:
+        bo = pd.read_csv(box_office_path, dtype={"imdb_id": "string"}).drop_duplicates("imdb_id").set_index("imdb_id")
+        ids = df["imdb_id"].astype("string")
+        df["legs"] = ids.map(bo["legs"]).round(3)
+        df["domestic_gross"] = ids.map(bo["domestic_gross"])
+        df["opening_weekend"] = ids.map(bo["opening_weekend"])
+        print(f"legs: filled for {int(df['legs'].notna().sum()):,} films (median {df['legs'].median():.2f}).")
+    if streaming_path:
+        st = pd.read_csv(streaming_path, dtype={"imdb_id": "string"}).drop_duplicates("imdb_id").set_index("imdb_id")
+        df["streaming_success"] = df["imdb_id"].astype("string").map(st["streaming_success"])
+        known = df["streaming_success"].notna()
+        print(f"streaming_success: defined for {int(known.sum()):,} films "
+              f"({int((df['streaming_success'] == 1).sum()):,} hit Netflix's global Top 10).")
+    return df
 
 
 # ---- Report ------------------------------------------------------------------
@@ -335,6 +356,8 @@ def main(argv=None):
     p.add_argument("--cpi", default="raw/comps/CPIAUCSL.csv", help="FRED CPIAUCSL CSV")
     p.add_argument("--wikidata", default="raw/comps/wikidata_financials.csv", help="from pull_wikidata.py")
     p.add_argument("--wikipedia", default="raw/comps/wikipedia_financials.csv", help="from pull_wikipedia.py")
+    p.add_argument("--box-office", default="raw/comps/wikipedia_box_office.csv", help="from pull_box_office.py")
+    p.add_argument("--streaming", default="raw/comps/streaming_success.csv", help="from pull_streaming.py")
     p.add_argument("--keep-low-gross", action="store_true",
                    help="keep films whose gross is under 5%% of budget (dropped by default as likely streaming)")
     p.add_argument("--out-dir", default="clean/comps", help="where to write outputs")
@@ -359,6 +382,7 @@ def main(argv=None):
     cpi_path = optional(args.cpi, "--cpi")
     df = inflation_adjust(df, load_cpi(cpi_path) if cpi_path else None)
     df = add_labels(df)
+    df = add_side_labels(df, optional(args.box_office, "--box-office"), optional(args.streaming, "--streaming"))
     df = df[OUTPUT_COLUMNS].sort_values(["release_date", "imdb_id"]).reset_index(drop=True)
 
     os.makedirs(args.out_dir, exist_ok=True)

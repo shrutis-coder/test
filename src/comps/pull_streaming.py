@@ -27,6 +27,7 @@ import io
 import os
 import re
 import sys
+import time
 import unicodedata
 import urllib.request
 
@@ -58,12 +59,25 @@ def load_top10():
             print(f"Using {path}")
             return pd.read_csv(path, sep="\t")
     print(f"Downloading {URL} ...")
-    try:
-        req = urllib.request.Request(URL, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=60, context=CTX) as resp:
-            text = resp.read().decode("utf-8")
-    except Exception as e:  # noqa: BLE001
-        sys.exit(f"Couldn't download the Netflix Top 10 file ({e}).\n"
+    text, last_error = None, None
+    for attempt in range(1, 5):     # the connection sometimes drops partway through
+        try:
+            req = urllib.request.Request(URL, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=120, context=CTX) as resp:
+                chunks = []
+                while True:
+                    chunk = resp.read(1 << 16)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            text = b"".join(chunks).decode("utf-8")
+            break
+        except Exception as e:  # noqa: BLE001  (IncompleteRead, timeouts, resets)
+            last_error = e
+            print(f"  attempt {attempt} failed ({type(e).__name__}); retrying...")
+            time.sleep(5 * attempt)
+    if text is None:
+        sys.exit(f"Couldn't download the Netflix Top 10 file ({last_error}).\n"
                  "Open https://www.netflix.com/tudum/top10, use the 'Download' link for the global "
                  "all-weeks data (TSV), and save it as raw/comps/all-weeks-global.tsv, then rerun.")
     os.makedirs("raw/comps", exist_ok=True)

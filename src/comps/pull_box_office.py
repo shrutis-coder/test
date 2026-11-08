@@ -26,6 +26,7 @@ number can be checked). clean_and_label.py then fills the legs column from it.
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -46,21 +47,44 @@ SELECT ?imdb ?title WHERE {
 
 MONEY = r"(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)\s*(million|billion)?"
 SCALE = {None: 1, "million": 1e6, "billion": 1e9}
-DOMESTIC = re.compile(
-    r"\b(?:grossed|earned|made|took in|grossing|earning)\s+(?:a total of\s+|over\s+|more than\s+|about\s+)?"
-    + MONEY + r"\s+(?:domestically|in (?:the )?(?:United States and Canada|U\.?S\.? and Canada|North America|"
-    r"United States|US|U\.S\.)\b)", re.I)
-OPENING = [
-    re.compile(r"\b(?:open(?:ed|s)?|debut(?:ed|s)?)\s+(?:to|for|with)\s+(?:a\s+)?(?:total of\s+)?" + MONEY, re.I),
-    re.compile(MONEY + r"\s+(?:in|during|over|from)\s+its\s+(?:domestic\s+)?opening\s+weekend", re.I),
-    re.compile(r"\bopening weekend\s+(?:of|total of|gross of|haul of|take of)\s+" + MONEY, re.I),
+US_PLACE = (r"(?:the\s+)?(?:United States and Canada|U\.?S\.? and Canada|US and Canada|North America|"
+            r"United States|U\.S\.|US)\b")
+DOMESTIC = [
+    # "grossed $176 million in the United States and Canada" / "earned $40 million domestically"
+    re.compile(r"\b(?:grossed|earned|made|took in|grossing|earning|making|taking in)\s+"
+               r"(?:a total of\s+|over\s+|more than\s+|about\s+|nearly\s+|almost\s+|roughly\s+)?"
+               + MONEY + r"\s+(?:domestically\b|in\s+" + US_PLACE + r")", re.I),
+    # "earned $40 million at the North American box office"
+    re.compile(r"\b(?:grossed|earned|made|took in|grossing|earning)\s+(?:over\s+|more than\s+|about\s+)?" + MONEY
+               + r"\s+at the\s+(?:domestic|North American|U\.?S\.?|US|American)\s+box office", re.I),
+    # "a domestic total of $40 million", "domestic gross of $40 million"
+    re.compile(r"\bdomestic (?:total|gross|box office(?: total)?)\s+of\s+" + MONEY, re.I),
+    # "... worldwide, including $40 million in North America" (no verb right before)
+    re.compile(MONEY + r"\s+(?:domestically\b|in\s+" + US_PLACE + r")", re.I),
 ]
-SKIP_SENTENCE = re.compile(
-    r"projected|expected to|tracking|forecast|predicted|estimated to|anticipated|"
-    r"worldwide|global|overseas|international|other territories|opening day|first day|"
-    r"\bin (?:China|Japan|South Korea|Korea|India|the United Kingdom|the UK|France|Germany|Italy|"
-    r"Spain|Australia|Mexico|Brazil|Russia)\b", re.I)
+OPENING = [
+    # "went on to open for $33.4 million", "debuted at number one with $25.7 million", "opened in 3,000 theaters to $X"
+    re.compile(r"\b(?:open(?:ed|s)?|debut(?:ed|s)?)\b[^.$]{0,90}?\b(?:to|for|with|grossing|earning|making|taking in)\s+"
+               r"(?:a\s+)?(?:total of\s+|an estimated\s+|over\s+|about\s+)?" + MONEY, re.I),
+    # "$12 million in its opening weekend", "$12 million during its North American opening weekend"
+    re.compile(MONEY + r"\s+(?:in|during|over|from|on)\s+its\s+(?:\w+\s+){0,2}opening weekend", re.I),
+    # "opening weekend of $12 million"
+    re.compile(r"\bopening weekend\s+(?:of|total of|gross of|haul of|take of)\s+" + MONEY, re.I),
+    # "In its opening weekend, the film grossed $12 million"
+    re.compile(r"\bopening weekend\b[^.$]{0,70}?\b(?:grossed|earned|made|took in|grossing|earning|making|taking in)\s+"
+               r"(?:an estimated\s+|over\s+|about\s+)?" + MONEY, re.I),
+]
+NOT_WEEKEND = re.compile(r"^[^.]{0,40}?\b(?:first day|opening day|on (?:Friday|Thursday|Saturday)|previews|"
+                         r"opening night|midnight)", re.I)
+PROJECTION = re.compile(r"projected|expected to|tracking|forecast|predicted|estimated to|anticipated|"
+                        r"was set to|was going to|initially", re.I)
+OTHER_MARKET = re.compile(r"worldwide|global|overseas|internationally|other territories|other countries|"
+                          r"\bin (?:China|Japan|South Korea|Korea|India|the United Kingdom|the UK|France|Germany|"
+                          r"Italy|Spain|Australia|Mexico|Brazil|Russia|Hong Kong|Taiwan)\b", re.I)
+US_MARKER = re.compile(US_PLACE + r"|domestic", re.I)
 SECTION = re.compile(r"^(={2,4})\s*(?:Box[ -]office|Commercial performance|Commercial)\b.*?\1\s*$", re.I | re.M)
+FALLBACK_SECTION = re.compile(r"^(={2,4})\s*(?:Release|Reception|Theatrical release|Theatrical run)\b.*?\1\s*$",
+                              re.I | re.M)
 MIN_LEGS, MAX_LEGS = 1.0, 40.0
 
 
@@ -68,8 +92,8 @@ def to_dollars(num, unit):
     return float(num.replace(",", "")) * SCALE[unit.lower() if unit else None]
 
 
-def box_office_section(wikitext):
-    m = SECTION.search(wikitext or "")
+def _section(wikitext, pattern):
+    m = pattern.search(wikitext or "")
     if not m:
         return None
     level = len(m.group(1))
@@ -78,28 +102,50 @@ def box_office_section(wikitext):
     return rest[:nxt.start()] if nxt else rest
 
 
-def parse_box_office(wikitext):
-    """(domestic_gross, opening_weekend, domestic_sentence, opening_sentence) from an article."""
-    section = box_office_section(wikitext)
+def box_office_section(wikitext):
+    """The Box office section; if the article has none, its Release / Reception section."""
+    return _section(wikitext, SECTION) or _section(wikitext, FALLBACK_SECTION)
+
+
+def first_money(patterns, sentence, check_after=None):
+    for pat in patterns:
+        for m in pat.finditer(sentence):
+            if check_after and check_after.search(sentence[m.end():]):
+                continue
+            return to_dollars(m.group(1), m.group(2))
+    return None
+
+
+def parse_section(section):
+    """(domestic_gross, opening_weekend, domestic_sentence, opening_sentence) from section wikitext."""
     if not section:
         return None, None, None, None
     text = clean_value(section.replace("\n", " "))
     sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z\"'])", text)
     domestic = opening = dom_s = open_s = None
     for s in sentences:
+        if PROJECTION.search(s):
+            continue
+        is_opening = re.search(r"\bopen|\bdebut", s, re.I)
         if domestic is None:
-            m = DOMESTIC.search(s)
-            if m and not re.search(r"projected|expected to|tracking", s, re.I):
-                domestic, dom_s = to_dollars(m.group(1), m.group(2)), s
-        if opening is None and not SKIP_SENTENCE.search(s):
-            for pat in OPENING:
-                m = pat.search(s)
-                if m:
-                    opening, open_s = to_dollars(m.group(1), m.group(2)), s
-                    break
+            # The verbless "$X in North America" form only counts outside opening-weekend sentences.
+            pats = DOMESTIC if not is_opening else DOMESTIC[:3]
+            value = first_money(pats, s)
+            if value is not None:
+                domestic, dom_s = value, s
+        if opening is None and is_opening:
+            if OTHER_MARKET.search(s) and not US_MARKER.search(s):
+                continue
+            value = first_money(OPENING, s, check_after=NOT_WEEKEND)
+            if value is not None:
+                opening, open_s = value, s
         if domestic is not None and opening is not None:
             break
     return domestic, opening, dom_s, open_s
+
+
+def parse_box_office(wikitext):
+    return parse_section(box_office_section(wikitext))
 
 
 def article_titles(imdb_ids, batch=300):
@@ -128,15 +174,30 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--labeled", default="clean/comps/comps_labeled.csv")
     p.add_argument("--out", default="raw/comps/wikipedia_box_office.csv")
+    p.add_argument("--cache", default="raw/comps/wikipedia_box_office_sections.jsonl",
+                   help="saved Box office sections, so the parsing can be redone without downloading")
+    p.add_argument("--from-cache", action="store_true", help="reparse the saved sections; no network")
     args = p.parse_args(argv)
 
-    ids = pd.read_csv(args.labeled, usecols=["imdb_id"])["imdb_id"].dropna().unique()
-    print(f"Looking up Wikipedia articles for {len(ids):,} labeled films...")
-    titles = article_titles(ids)
-    print(f"{len(titles):,} have an English Wikipedia article. Reading them...")
-    texts = fetch_wikitext(titles["wiki_title"].tolist())
+    if args.from_cache:
+        rows = [json.loads(line) for line in open(args.cache)]
+        titles = pd.DataFrame(rows)[["imdb_id", "wiki_title"]]
+        sections = {r["wiki_title"]: r["section"] for r in rows}
+        print(f"Reparsing {len(titles):,} saved sections from {args.cache}")
+    else:
+        ids = pd.read_csv(args.labeled, usecols=["imdb_id"])["imdb_id"].dropna().unique()
+        print(f"Looking up Wikipedia articles for {len(ids):,} labeled films...")
+        titles = article_titles(ids)
+        print(f"{len(titles):,} have an English Wikipedia article. Reading them...")
+        texts = fetch_wikitext(titles["wiki_title"].tolist())
+        sections = {t: box_office_section(texts.get(t, "")) for t in titles["wiki_title"]}
+        os.makedirs(os.path.dirname(args.cache) or ".", exist_ok=True)
+        with open(args.cache, "w") as fh:
+            for imdb_id, t in zip(titles["imdb_id"], titles["wiki_title"]):
+                fh.write(json.dumps({"imdb_id": imdb_id, "wiki_title": t, "section": sections.get(t)}) + "\n")
+        print(f"Saved the sections to {args.cache} (rerun with --from-cache to reparse without downloading)")
 
-    parsed = titles["wiki_title"].map(lambda t: parse_box_office(texts.get(t, "")))
+    parsed = titles["wiki_title"].map(lambda t: parse_section(sections.get(t)))
     titles[["domestic_gross", "opening_weekend", "domestic_sentence", "opening_sentence"]] = \
         pd.DataFrame(parsed.tolist(), index=titles.index)
     titles["legs"] = titles["domestic_gross"] / titles["opening_weekend"]

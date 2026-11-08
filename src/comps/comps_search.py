@@ -66,7 +66,7 @@ def load(labeled_path, emb_path):
     return df, vectors, model
 
 
-def search_band(band_df, vectors, k_max, min_gap_days):
+def search_band(band_df, vectors, k_max, min_gap_days, max_age_years=None, min_votes=0):
     """Top-k comps for every film in one budget band. Returns (rows of comp indices, sims, candidate counts)."""
     films = band_df.reset_index(drop=True)
     has_vec = films["vec_row"].notna().to_numpy()
@@ -77,6 +77,11 @@ def search_band(band_df, vectors, k_max, min_gap_days):
     as_of = films["as_of"].to_numpy("datetime64[D]").astype(np.int64)
     released = films["release"].to_numpy("datetime64[D]").astype(np.int64)
     ok = released[None, :] <= (as_of[:, None] - min_gap_days)   # comp j known before film i's as-of date
+    if max_age_years:
+        ok &= released[None, :] >= (as_of[:, None] - int(max_age_years * 365.25))   # not too old
+    if min_votes:
+        votes = films["vote_count"].fillna(0).to_numpy()
+        ok &= (votes >= min_votes)[None, :]                     # comp is reasonably well known
 
     genres = sorted({g for s in films["genre_set"] for g in s})
     gidx = {g: n for n, g in enumerate(genres)}
@@ -151,6 +156,8 @@ def main(argv=None):
     p.add_argument("--k", type=int, default=K_MAX, help="comps per film (plan: 5 to 10)")
     p.add_argument("--min-gap-days", type=int, default=180,
                    help="a comp must be released this many days before the film's as_of_date")
+    p.add_argument("--max-age-years", type=float, help="only comps released within this many years of the as-of date")
+    p.add_argument("--min-votes", type=int, default=0, help="only comps with at least this many TMDB votes")
     p.add_argument("--close", type=float, help="similarity counted as a close comp (default depends on model)")
     p.add_argument("--show", nargs="*", default=["Get Out", "Paranormal Activity", "Inception", "Fight Club"],
                    help="titles whose comps to print as a sanity check")
@@ -161,12 +168,15 @@ def main(argv=None):
     df, vectors, model = load(args.labeled, args.embeddings)
     close = args.close if args.close is not None else CLOSE_THRESHOLD.get(model, 0.5)
     print(f"{len(df):,} films, {int(df['vec_row'].notna().sum()):,} with a synopsis vector ({model}).")
-    print(f"Rules: same budget band, includes main genre, released >= {args.min_gap_days} days before as_of_date, "
-          f"top {args.k}. Close comp = similarity >= {close}.")
+    extra = (f", within {args.max_age_years:g} years" if args.max_age_years else "") + \
+            (f", >= {args.min_votes} TMDB votes" if args.min_votes else "")
+    print(f"Rules: same budget band, includes main genre, released >= {args.min_gap_days} days before as_of_date"
+          f"{extra}, top {args.k}. Close comp = similarity >= {close}.")
 
     feats, comps = [], []
     for band, band_df in df.groupby("budget_band"):
-        films, top, top_sims, n_cand = search_band(band_df, vectors, args.k, args.min_gap_days)
+        films, top, top_sims, n_cand = search_band(band_df, vectors, args.k, args.min_gap_days,
+                                                   args.max_age_years, args.min_votes)
         f, c = summarize(films, top, top_sims, n_cand, close, model)
         feats += f
         comps += c

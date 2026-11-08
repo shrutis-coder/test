@@ -2,34 +2,33 @@
 
 Builds the labeled film table the Comps search, Comps expert and Combiner train on.
 
-What it does (per the team plan, "P5 Comps -> Clean and label"):
-  1. Loads the big TMDB dataset (and optionally the 2024-2026 pull) and merges them
-     with the existing combine_datasets() from data_processing.py.
-  2. Cleans rows, logging every dropped row and the reason (shared rule).
-  3. Keys everything on imdb_id and adds as_of_date (shared handoff rule).
-  4. Inflation-adjusts budget and revenue with US CPI (FRED CPIAUCSL).
-  5. Adds labels: roi_multiple, log_roi, breakeven (>= 2.5x), breakout (>= 5x),
+Steps (team plan, "P5 Comps -> Clean and label"):
+  1. Load the TMDB 1M dataset (optionally merged with the 2024-2026 pull).
+  2. Fill missing budget / worldwide gross from Wikidata and Wikipedia, joined on
+     imdb_id (fill-only: TMDB figures are never overwritten).
+  3. Clean rows, logging every dropped row and the reason.
+  4. Key on imdb_id with an as_of_date (= release date, so comps come only from earlier films).
+  5. Inflation-adjust with US CPI (FRED CPIAUCSL).
+  6. Labels: roi_multiple, log_roi, breakeven (>= 2.5x), breakout (>= 5x),
      budget_band, audience_score. streaming_success and legs need sources we don't
-     have yet (streaming Top 10, Box Office Mojo opening weekends), so they are left
-     empty for now and filled by later scripts.
-  6. Assigns the year split: train <= 2017, validate 2018-2019, skip 2020-2021,
-     test 2022-2025. Anything else is "excluded".
-  7. Prints a report of counts against the plan's minimums.
+     have yet, so they are empty for now.
+  7. Year split: train <= 2017, validate 2018-2019, skip 2020-2021, test 2022-2025.
+  8. Print counts against the plan's minimums.
 
-Usage (from the tmdb-exploratory-analysis folder):
+Run from the repo root (see src/comps/README.md for the downloads):
 
-    python src/clean_and_label.py \
-        --big "data/raw/TMDB_movie_dataset_v11.csv" \
-        --small "data/raw/tmdb_movies_2024_2026.xlsx" \
-        --cpi "data/raw/CPIAUCSL.csv"
+    python src/comps/clean_and_label.py
 
---small and --cpi are optional. Download the CPI file from
-https://fred.stlouisfed.org/series/CPIAUCSL ("Download" -> CSV). Without it the
-script still runs but leaves the *_adj columns empty.
+Reads (defaults; each can be changed with a flag):
+    raw/comps/TMDB_movie_dataset_v11.csv     --big       (required)
+    raw/comps/CPIAUCSL.csv                   --cpi       (skipped if missing)
+    raw/comps/wikidata_financials.csv        --wikidata  (skipped if missing)
+    raw/comps/wikipedia_financials.csv       --wikipedia (skipped if missing)
 
-Outputs (default data/clean/):
-    comps_labeled.csv     one row per film, the handoff table
-    comps_dropped_rows.csv   every dropped row with its reason
+Writes:
+    clean/comps/comps_labeled.csv            one row per film, the handoff table
+    clean/comps/comps_dropped_rows.csv       every dropped row and why
+    clean/comps/<source>_unmatched.csv       Wikidata/Wikipedia rows that matched no TMDB film
 """
 
 import argparse
@@ -40,13 +39,16 @@ import numpy as np
 import pandas as pd
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from data_processing import CANONICAL_COLUMNS, combine_datasets, standardize_schema  # noqa: E402
+from tmdb_schema import combine_datasets, standardize_schema  # noqa: E402
 
 # ---- Thresholds from the team plan -------------------------------------------
 BREAKEVEN_MULTIPLE = 2.5
 BREAKOUT_MULTIPLE = 5.0
-MIN_PLAUSIBLE_DOLLARS = 1000      # same placeholder cutoff as data_processing.py
+MIN_PLAUSIBLE_DOLLARS = 1000      # under this, budget/gross is placeholder junk (e.g. $1)
 SUSPECT_MULTIPLE = 100            # flagged, not dropped: often a units error in TMDB
+# Gross under 5% of budget: almost always a streaming release with a token theatrical run
+# (The Gray Man, White Noise, Pinocchio), not a real box office result. Real bombs earn more.
+LOW_GROSS_MULTIPLE = 0.05
 AUDIENCE_MIN_VOTES = 50           # vote_average is noise below this many votes
 
 # Budget bands (plan, P1 budget estimator), applied to the inflation-adjusted budget.
@@ -81,7 +83,7 @@ OUTPUT_COLUMNS = [
     "budget", "revenue", "budget_adj", "revenue_adj", "cpi_base_month",
     "budget_band", "roi_multiple", "log_roi", "breakeven", "breakout",
     "audience_score", "vote_count", "streaming_success", "legs",
-    "overview", "has_synopsis", "suspect_multiple", "data_source",
+    "overview", "has_synopsis", "suspect_multiple", "data_source", "financials_source", "budget_source", "revenue_source",
 ]
 
 
@@ -101,6 +103,43 @@ def load_and_merge(big_path, small_path=None):
         print(f"Loaded 2024-2026 pull: {len(small):,} rows from {small_path}")
         return combine_datasets(small, big)
     return standardize_schema(big, "big_dataset")
+
+
+def apply_fill(df, path, out_dir, source):
+    """Fill missing budget/revenue from Wikidata or Wikipedia, joined on imdb_id.
+
+    Fill-only: a TMDB value that already passes the plausibility cutoff is kept.
+    budget_source / revenue_source record where each figure came from.
+    """
+    wd = pd.read_csv(path, dtype={"imdb_id": "string"})
+    wd = wd.drop_duplicates("imdb_id").set_index("imdb_id")
+    ids = df["imdb_id"].astype("string").str.strip()
+    budget = pd.to_numeric(df["budget"], errors="coerce")
+    revenue = pd.to_numeric(df["revenue"], errors="coerce")
+    had_both = (budget >= MIN_PLAUSIBLE_DOLLARS) & (revenue >= MIN_PLAUSIBLE_DOLLARS)
+
+    wd_budget = ids.map(wd["budget_usd"])
+    wd_gross = ids.map(wd["gross_usd"])
+    fill_b = (budget.isna() | (budget < MIN_PLAUSIBLE_DOLLARS)) & (wd_budget >= MIN_PLAUSIBLE_DOLLARS)
+    fill_r = (revenue.isna() | (revenue < MIN_PLAUSIBLE_DOLLARS)) & (wd_gross >= MIN_PLAUSIBLE_DOLLARS)
+    df["budget"] = budget.where(~fill_b, wd_budget)
+    df["revenue"] = revenue.where(~fill_r, wd_gross)
+
+    df.loc[fill_b, "budget_source"] = source
+    df.loc[fill_r, "revenue_source"] = source
+
+    now_both = (df["budget"] >= MIN_PLAUSIBLE_DOLLARS) & (df["revenue"] >= MIN_PLAUSIBLE_DOLLARS)
+    gained = now_both & ~had_both
+    years = pd.to_datetime(df["release_date"], errors="coerce").dt.year
+    matched = ids.isin(wd.index)
+    unmatched = wd[~wd.index.isin(ids)]
+    os.makedirs(out_dir, exist_ok=True)
+    unmatched.reset_index().to_csv(os.path.join(out_dir, f"{source}_unmatched.csv"), index=False)
+    print(f"{source}: {len(wd):,} films, {int(matched.sum()):,} matched on imdb_id; "
+          f"filled budget for {int(fill_b.sum()):,}, gross for {int(fill_r.sum()):,}; "
+          f"{int(gained.sum()):,} films now have both "
+          f"({int((gained & years.between(2022, 2025)).sum()):,} from 2022-2025).")
+    return df
 
 
 # ---- Cleaning with a drop log -----------------------------------------------
@@ -132,7 +171,7 @@ def _blank(series):
     return series.isna() | (series.astype(str).str.strip().isin(["", "nan", "None", "[]"]))
 
 
-def clean(df, log):
+def clean(df, log, keep_low_gross=False):
     df = df.copy()
     for col in ("budget", "revenue", "runtime_minutes", "vote_average", "vote_count"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -156,6 +195,9 @@ def clean(df, log):
     df = df.sort_values("vote_count", ascending=False, na_position="last")
     df = log.drop(df, df.duplicated(subset="imdb_id", keep="first"),
                   "duplicate imdb_id (kept the row with most votes)")
+    if not keep_low_gross:
+        df = log.drop(df, df["revenue"] < LOW_GROSS_MULTIPLE * df["budget"],
+                      f"gross under {LOW_GROSS_MULTIPLE:.0%} of budget (likely streaming or token release)")
     return df
 
 
@@ -265,29 +307,57 @@ def report(df):
                                              fill_value=0).to_string())
     print("\nBreakeven rate by split:")
     print(usable.groupby("split")["breakeven"].mean().round(3).to_string())
+    print("\nTest films by year and financials source:")
+    test = df[df["split"] == "test"]
+    print(pd.crosstab(test["release_year"], test["financials_source"]).to_string())
     print("\nFilms by budget band:")
     print(df["budget_band"].value_counts().to_string())
     n_suspect = int(df["suspect_multiple"].sum())
     if n_suspect:
         print(f"\n{n_suspect:,} films have a multiple over {SUSPECT_MULTIPLE}x "
-              "(flagged suspect_multiple=1). Spot-check these against The Numbers.")
+              "(flagged suspect_multiple=1). Often a TMDB budget typo; spot-check before training.")
 
 
 # ---- Main --------------------------------------------------------------------
+def optional(path, flag):
+    """Use an optional input only if it exists, and say so either way."""
+    if path and os.path.exists(path):
+        return path
+    if path:
+        print(f"({flag}: {path} not found, skipping)")
+    return None
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--big", required=True, help="big TMDB dataset (CSV or Excel)")
+    p.add_argument("--big", default="raw/comps/TMDB_movie_dataset_v11.csv", help="TMDB 1M dataset CSV")
     p.add_argument("--small", help="optional 2024-2026 TMDB pull (CSV or Excel)")
-    p.add_argument("--cpi", help="FRED CPIAUCSL CSV for inflation adjustment")
-    p.add_argument("--out-dir", default="data/clean", help="where to write outputs")
+    p.add_argument("--cpi", default="raw/comps/CPIAUCSL.csv", help="FRED CPIAUCSL CSV")
+    p.add_argument("--wikidata", default="raw/comps/wikidata_financials.csv", help="from pull_wikidata.py")
+    p.add_argument("--wikipedia", default="raw/comps/wikipedia_financials.csv", help="from pull_wikipedia.py")
+    p.add_argument("--keep-low-gross", action="store_true",
+                   help="keep films whose gross is under 5%% of budget (dropped by default as likely streaming)")
+    p.add_argument("--out-dir", default="clean/comps", help="where to write outputs")
     args = p.parse_args(argv)
+    if not os.path.exists(args.big):
+        sys.exit(f"TMDB file not found: {args.big}. Download it (see src/comps/README.md) or pass --big PATH.")
 
     df = load_and_merge(args.big, args.small)
     print(f"Merged: {len(df):,} rows")
+    df["budget_source"] = "tmdb"
+    df["revenue_source"] = "tmdb"
+    for source, path in (("wikidata", optional(args.wikidata, "--wikidata")),
+                         ("wikipedia", optional(args.wikipedia, "--wikipedia"))):
+        if path:
+            df = apply_fill(df, path, args.out_dir, source)
+    # One label per film: "wikipedia", or "tmdb/wikipedia" when budget and gross came from different places.
+    df["financials_source"] = df["budget_source"].where(
+        df["budget_source"] == df["revenue_source"], df["budget_source"] + "/" + df["revenue_source"])
 
     log = DropLog()
-    df = clean(df, log)
-    df = inflation_adjust(df, load_cpi(args.cpi) if args.cpi else None)
+    df = clean(df, log, keep_low_gross=args.keep_low_gross)
+    cpi_path = optional(args.cpi, "--cpi")
+    df = inflation_adjust(df, load_cpi(cpi_path) if cpi_path else None)
     df = add_labels(df)
     df = df[OUTPUT_COLUMNS].sort_values(["release_date", "imdb_id"]).reset_index(drop=True)
 

@@ -64,6 +64,18 @@ For each film, it keeps the 10 most similar films that meet all of these rules:
 
 `comps_list.csv` has one row per (film, comp) with rank and similarity. It feeds the investor view's "five closest comps".
 
+## 6. Comps expert
+
+```
+python src/comps/comps_expert.py      # -> features/comps/comps_expert_scores.csv, models/experts/comps_expert.pkl
+```
+
+Gradient boosting on the comp features only. It predicts **breakeven**, and `comps_score` = 100 × P(breakeven). `comps_logit` is the same score on the logit scale for the combiner.
+
+- **Train films (≤ 2017)** are scored **out-of-fold** (5 folds; the `fold` column says which). Each score comes from a model that never saw that film, so P6 can train the combiner on them without leakage.
+- **All other films** are scored by one model fit on all train films.
+- **Accuracy** is reported on train (out-of-fold) and validate only. Test films are scored but not evaluated, since the test set is opened once at the end.
+
 ## Output: `clean/comps/comps_labeled.csv`
 
 One row per film, keyed on `imdb_id` with `as_of_date` (= release date).

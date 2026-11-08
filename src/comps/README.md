@@ -29,6 +29,41 @@ python src/comps/clean_and_label.py   # -> clean/comps/comps_labeled.csv
 
 Uses the Wikidata/Wikipedia files automatically if they exist. Prints counts against the plan's minimums.
 
+## 4. Embed synopses
+
+```
+python -m pip install -r src/comps/requirements.txt   # once
+python src/comps/embed_synopses.py    # -> features/comps/synopsis_embeddings.npz
+```
+
+Uses `sentence-transformers/all-MiniLM-L6-v2` (384 dims). The first run downloads the model (~90 MB).
+
+## 5. Comps search
+
+```
+python src/comps/comps_search.py      # -> features/comps/comps_features.csv, comps_list.csv
+```
+
+For each film, it keeps the 10 most similar films that meet all of these rules:
+
+- same budget band
+- includes the film's **main (first-listed) genre**
+- released **at least 180 days before** the film's `as_of_date`, so its final gross was already known (`--min-gap-days` to change)
+- never the film itself
+
+`comps_features.csv` has one row per film, keyed on `imdb_id` + `as_of_date`, for the comps expert:
+
+| Column | Meaning |
+| --- | --- |
+| `n_candidates`, `n_comps` | eligible films, comps kept (≤ 10) |
+| `comp_log_roi_mean`, `comp_log_roi_std` | comp ROI average and spread (log scale) |
+| `comp_roi_median`, `comp_breakeven_rate`, `comp_breakout_rate` | how the comps did |
+| `closest_similarity`, `mean_similarity` | cosine similarity to the best / average comp |
+| `n_close_comps` | comps with similarity ≥ 0.5 |
+| `comp_recency_years` | median years between the comps' release and the as-of date |
+
+`comps_list.csv` has one row per (film, comp) with rank and similarity. It feeds the investor view's "five closest comps".
+
 ## Output: `clean/comps/comps_labeled.csv`
 
 One row per film, keyed on `imdb_id` with `as_of_date` (= release date).

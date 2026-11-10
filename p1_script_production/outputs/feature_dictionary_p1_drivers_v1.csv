@@ -1,0 +1,24 @@
+feature,meaning,how_computed,range,source,version
+score_shoot_days,Rough size of the shoot,1 to 5 by comparing raw_shoot_days with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_shoot_days,Rough size of the shoot (raw number),"scene_count + 2 x number of heavy scenes (stunts, vfx or set_complexity averaging 1.5 or more)",number >= 0,scene tags + parser,p1_drivers_v1
+score_cast_size,How many different speaking characters,1 to 5 by comparing raw_cast_size with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_cast_size,How many different speaking characters (raw number),unique_speaking_characters from the parser,number >= 0,scene tags + parser,p1_drivers_v1
+score_locations,How many different locations,1 to 5 by comparing raw_locations with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_locations,How many different locations (raw number),unique_locations from the parser,number >= 0,scene tags + parser,p1_drivers_v1
+score_exteriors_nights,Share of outdoor and night shooting,1 to 5 by comparing raw_exteriors_nights with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_exteriors_nights,Share of outdoor and night shooting (raw number),ext_share + night_share from the parser,number >= 0,scene tags + parser,p1_drivers_v1
+score_sets,How elaborate the sets are,1 to 5 by comparing raw_sets with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_sets,How elaborate the sets are (raw number),average set_complexity per scene (tagger),number >= 0,scene tags + parser,p1_drivers_v1
+score_stunts,How much stunt work,1 to 5 by comparing raw_stunts with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_stunts,How much stunt work (raw number),average stunts score per scene (tagger),number >= 0,scene tags + parser,p1_drivers_v1
+score_vfx,How much visual effects,1 to 5 by comparing raw_vfx with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_vfx,How much visual effects (raw number),average vfx score per scene (tagger),number >= 0,scene tags + parser,p1_drivers_v1
+score_special_conditions,"Water, weather, fire, animals, etc.",1 to 5 by comparing raw_special_conditions with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_special_conditions,"Water, weather, fire, animals, etc. (raw number)",average number of special conditions per scene (tagger),number >= 0,scene tags + parser,p1_drivers_v1
+score_costume_makeup,Costume and makeup burden,1 to 5 by comparing raw_costume_makeup with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_costume_makeup,Costume and makeup burden (raw number),average costume_makeup score per scene (tagger),number >= 0,scene tags + parser,p1_drivers_v1
+score_music,Music on screen,1 to 5 by comparing raw_music with saved cut points (20th/40th/60th/80th percentiles),1-5,scene tags + parser,p1_drivers_v1
+raw_music,Music on screen (raw number),average music score per scene (tagger),number >= 0,scene tags + parser,p1_drivers_v1
+n_scenes_tagged,scenes with tags,from tagger output,,scene tags,p1_drivers_v1
+tag_coverage,scenes tagged / scene_count; low means missing tags,from tagger output,,scene tags,p1_drivers_v1
+min_runs_used,fewest runs averaged for any scene (3 is full),from tagger output,,scene tags,p1_drivers_v1

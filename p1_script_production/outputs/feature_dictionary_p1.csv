@@ -1,0 +1,63 @@
+name,group,definition,source,pre_release,owner,version
+imdb_id,key,"IMDb ID, the join key for every table",MovieSum,yes,P1,production_features_v1
+as_of_date,key,Release date of the film; features must only use data before it,TMDB release_date,yes,P1,production_features_v1
+movie_name,key,"Title with year, as in MovieSum",MovieSum,yes,P1,production_features_v1
+year,key,Release year parsed from the MovieSum title,MovieSum,yes,P1,production_features_v1
+year_split,key,"train through 2017, validate 2018-2019, skip 2020-2021, test 2022 on",rule on year,yes,P1,production_features_v1
+genres,production,Genre list for the film (stands in for a script-based genre guess),TMDB genres,yes (proxy),P1,production_features_v1
+genre_primary,production,First genre listed,TMDB genres,yes (proxy),P1,production_features_v1
+script_words_clean,production,Words in the script with markup tags removed,script text,yes,P1,production_features_v1
+est_pages,production,script words / 200 (rule of thumb),script text,yes,P1,production_features_v1
+est_runtime_min,production,Estimated runtime in minutes: 1 page = 1 minute,script text,yes,P1,production_features_v1
+scene_count,production,Number of scene headings found by the Scene parser,scene_parser_v2,yes,P1,production_features_v1
+int_share,production,Share of scenes inside (INT/EXT counts half each),scene_parser_v2,yes,P1,production_features_v1
+ext_share,production,Share of scenes outside,scene_parser_v2,yes,P1,production_features_v1
+night_share,production,Night scenes / (day + night scenes); blank if no times known,scene_parser_v2,yes,P1,production_features_v1
+unknown_time_share,production,Share of scenes whose time of day could not be read,scene_parser_v2,yes,P1,production_features_v1
+unique_locations,production,Number of different location names in scene headings,scene_parser_v2,yes,P1,production_features_v1
+scenes_per_location,production,scene_count / unique_locations; high means few repeated sets,scene_parser_v2,yes,P1,production_features_v1
+speaking_characters,production,Number of different speaking characters,scene_parser_v2,yes,P1,production_features_v1
+dialogue_lines,production,Number of dialogue blocks,scene_parser_v2,yes,P1,production_features_v1
+description_words,production,Words in scene descriptions (action text),scene_parser_v2,yes,P1,production_features_v1
+profanity_strong_per_1k,production,"F-word forms per 1,000 words",script text,yes,P1,production_features_v1
+profanity_other_per_1k,production,"Other strong swear words per 1,000 words",script text,yes,P1,production_features_v1
+profanity_mild_per_1k,production,"Mild swear words (damn, hell, ass...) per 1,000 words",script text,yes,P1,production_features_v1
+est_rating_language,production,"Rough G/PG/PG-13/R guess from language only, NOT validated",script text,yes,P1,production_features_v1
+parse_mode,flag,"strict, loose, text_fallback or no_headings: how the scenes were found",scene_parser_v2,yes,P1,production_features_v1
+flag_low_confidence,flag,1 if parse_mode is not strict or fewer than 30 scenes were found,scene_parser_v2,yes,P1,production_features_v1
+flag_genre_missing,flag,1 if no TMDB genre was found,TMDB,yes,P1,production_features_v1
+genre_action,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_adventure,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_animation,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_comedy,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_crime,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_drama,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_family,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_fantasy,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_history,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_horror,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_music,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_mystery,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_romance,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_science_fiction,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_tv_movie,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_thriller,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_war,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+genre_western,production,1 if the film has this genre (multi-hot),TMDB genres,yes (proxy),P1,production_features_v1
+features_version,key,Version of the feature code that made the row,this file,yes,P1,production_features_v1
+budget_nominal,budget,"Production budget in dollars of the release year (TMDB); blank if under $10,000",TMDB budget,no (label for the budget estimator),P1,budget_table_v1
+gross_nominal,budget,"Worldwide gross in release-year dollars (TMDB); blank if under $10,000",TMDB revenue,no (outcome),P1,budget_table_v1
+inflation_factor,budget,US CPI at the latest month divided by CPI at the release month,FRED CPIAUCSL,yes,P1,budget_table_v1
+budget_adj,budget,Budget in today's dollars = budget_nominal x inflation_factor,TMDB + FRED CPI,no (label for the budget estimator),P1,budget_table_v1
+gross_adj,budget,Gross in today's dollars,TMDB + FRED CPI,no (outcome),P1,budget_table_v1
+budget_band_adj,budget,"micro <$1M, low $1-10M, mid $10-40M, high $40-100M, tentpole $100M+, on budget_adj",TMDB + FRED CPI,no (label for the budget estimator),P1,budget_table_v1
+budget_band_nominal,budget,Same bands on the unadjusted budget (for comparison only),TMDB,no,P1,budget_table_v1
+flag_budget_usable,flag,"1 if the budget is at least $10,000",TMDB,yes,P1,budget_table_v1
+flag_no_release_date,flag,1 if the release date was missing and mid-year of the title year was used,TMDB,yes,P1,budget_table_v1
+flag_cpi_extrapolated,flag,1 if the film predates the first CPI month (1947) and the first month was used,FRED CPIAUCSL,yes,P1,budget_table_v1
+budget_table_version,key,Version of the budget table code,this file,yes,P1,budget_table_v1
+year_gap,flag,Years between the MovieSum title year and the TMDB release year,MovieSum + TMDB,yes,P1,budget_table_v1
+flag_year_mismatch,flag,1 if year_gap is 2 or more: the TMDB match is probably a different film (e.g. a remake),MovieSum + TMDB,yes,P1,budget_table_v1
+flag_budget_suspect,flag,1 if a person reviewed the TMDB budget and judged it implausible (see budget_suspect_reason),manual review,no,P1,budget_table_v1
+budget_suspect_reason,flag,Why the budget was marked suspect,manual review,no,P1,budget_table_v1
+use_for_budget_estimator,flag,1 if the budget is usable and not suspect: the rows to train the budget estimator on,rule,no,P1,budget_table_v1
